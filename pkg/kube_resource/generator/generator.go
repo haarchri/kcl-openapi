@@ -114,8 +114,8 @@ func GetSpecs(opts *GenOpts, fs afero.Fs) ([]string, error) {
 		return result, fmt.Errorf("could not load spec: %s, err: %s", opts.Spec, err)
 	}
 
-	for index, content := range contents {
-		// Generate OpenAPI spec from CRD
+	for _, content := range contents {
+		// generate openapi spec from crd
 		swagger, err := generate(content)
 		if err != nil {
 			return result, fmt.Errorf("could not generate swagger spec: %s, err: %s", opts.Spec, err)
@@ -127,28 +127,23 @@ func GetSpecs(opts *GenOpts, fs afero.Fs) ([]string, error) {
 			return result, fmt.Errorf("could not validate swagger spec: %s, err: %s", opts.Spec, err)
 		}
 
-		// Define the path where the swagger content will be written
-		// Here we name the file with an index to handle multiple contents
-		outputPath := filepath.Join("kcl-swagger-specs", fmt.Sprintf("swagger-spec-%d.json", index))
-
-		// Ensure the directory exists
-		if err := fs.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-			return result, fmt.Errorf("could not create directory for swagger spec: %s, err: %s", outputPath, err)
+		tmpSpecDir := os.TempDir()
+		tmpFile, err := os.CreateTemp(tmpSpecDir, "kcl-swagger-")
+		if err != nil {
+			return result, fmt.Errorf("could not validate swagger spec: %s, err: %s", opts.Spec, err)
 		}
 
-		// Write the swagger content to the file in the afero filesystem
-		if err := afero.WriteFile(fs, outputPath, swaggerContent, 0644); err != nil {
-			return result, fmt.Errorf("could not write swagger spec file: %s, err: %s", outputPath, err)
+		// copy k8s.json to tmpDir
+		if err := os.WriteFile(filepath.Join(tmpSpecDir, "k8s.json"), []byte(k8sFile), 0644); err != nil {
+			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
 		}
 
-		// Write k8s.json to the same directory
-		k8sFilePath := filepath.Join(filepath.Dir(outputPath), "k8s.json")
-		if err := afero.WriteFile(fs, k8sFilePath, []byte(k8sFile), 0644); err != nil {
-			return result, fmt.Errorf("could not write k8s.json file: %s, err: %s", k8sFilePath, err)
+		if _, err := tmpFile.Write(swaggerContent); err != nil {
+			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
 		}
 
-		// Append the file path to the result
-		result = append(result, outputPath)
+		// Append the tmp openapi spec file path
+		result = append(result, tmpFile.Name())
 	}
 
 	return result, nil
