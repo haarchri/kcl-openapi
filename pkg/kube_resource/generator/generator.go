@@ -114,7 +114,7 @@ func GetSpecs(opts *GenOpts, fs afero.Fs) ([]string, error) {
 		return result, fmt.Errorf("could not load spec: %s, err: %s", opts.Spec, err)
 	}
 
-	for _, content := range contents {
+	for index, content := range contents {
 		// Generate OpenAPI spec from CRD
 		swagger, err := generate(content)
 		if err != nil {
@@ -127,26 +127,28 @@ func GetSpecs(opts *GenOpts, fs afero.Fs) ([]string, error) {
 			return result, fmt.Errorf("could not validate swagger spec: %s, err: %s", opts.Spec, err)
 		}
 
-		// Create a temporary directory using afero
-		tmpSpecDir := os.TempDir() // os.TempDir() can remain unchanged since it returns a path
-		tmpFile, err := afero.TempFile(fs, tmpSpecDir, "kcl-swagger-")
-		if err != nil {
-			return result, fmt.Errorf("could not create temporary file for swagger spec: %s, err: %s", opts.Spec, err)
-		}
-		defer tmpFile.Close() // Ensure the file is closed
+		// Define the path where the swagger content will be written
+		// Here we name the file with an index to handle multiple contents
+		outputPath := filepath.Join("kcl-swagger-specs", fmt.Sprintf("swagger-spec-%d.json", index))
 
-		// Write k8s.json to the temp directory using afero
-		if err := afero.WriteFile(fs, filepath.Join(tmpSpecDir, "k8s.json"), []byte(k8sFile), 0644); err != nil {
-			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
+		// Ensure the directory exists
+		if err := fs.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return result, fmt.Errorf("could not create directory for swagger spec: %s, err: %s", outputPath, err)
 		}
 
-		// Write the swagger content to the temporary file
-		if _, err := tmpFile.Write(swaggerContent); err != nil {
-			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
+		// Write the swagger content to the file in the afero filesystem
+		if err := afero.WriteFile(fs, outputPath, swaggerContent, 0644); err != nil {
+			return result, fmt.Errorf("could not write swagger spec file: %s, err: %s", outputPath, err)
 		}
 
-		// Append the tmp openapi spec file path
-		result = append(result, tmpFile.Name())
+		// Write k8s.json to the same directory
+		k8sFilePath := filepath.Join(filepath.Dir(outputPath), "k8s.json")
+		if err := afero.WriteFile(fs, k8sFilePath, []byte(k8sFile), 0644); err != nil {
+			return result, fmt.Errorf("could not write k8s.json file: %s, err: %s", k8sFilePath, err)
+		}
+
+		// Append the file path to the result
+		result = append(result, outputPath)
 	}
 
 	return result, nil
