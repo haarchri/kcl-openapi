@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/spf13/afero"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/install"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -95,47 +96,59 @@ func GetSpec(opts *GenOpts) (string, error) {
 // Returns:
 // - []string: a list of temporary file paths for the generated OpenAPI specs
 // - error: an error message if any error occurs.
-func GetSpecs(opts *GenOpts) ([]string, error) {
+func GetSpecs(opts *GenOpts, fs afero.Fs) ([]string, error) {
 	var result []string
-	// read crd content from file
+
+	// Read CRD content from file using afero
 	path, err := filepath.Abs(opts.Spec)
 	if err != nil {
 		return result, fmt.Errorf("could not locate spec: %s, err: %s", opts.Spec, err)
 	}
-	crdContent, err := os.ReadFile(path)
+	crdContent, err := afero.ReadFile(fs, path)
 	if err != nil {
 		return result, fmt.Errorf("could not load spec: %s, err: %s", opts.Spec, err)
 	}
+
 	contents, err := splitDocuments(string(crdContent))
 	if err != nil {
 		return result, fmt.Errorf("could not load spec: %s, err: %s", opts.Spec, err)
 	}
+
 	for _, content := range contents {
-		// generate openapi spec from crd
+		// Generate OpenAPI spec from CRD
 		swagger, err := generate(content)
 		if err != nil {
 			return result, fmt.Errorf("could not generate swagger spec: %s, err: %s", opts.Spec, err)
 		}
-		// write openapi spec to tmp file, along with the referenced k8s.json
+
+		// Marshal the swagger content
 		swaggerContent, err := json.MarshalIndent(swagger, "", "")
 		if err != nil {
 			return result, fmt.Errorf("could not validate swagger spec: %s, err: %s", opts.Spec, err)
 		}
-		tmpSpecDir := os.TempDir()
-		tmpFile, err := os.CreateTemp(tmpSpecDir, "kcl-swagger-")
+
+		// Create a temporary directory using afero
+		tmpSpecDir := os.TempDir() // os.TempDir() can remain unchanged since it returns a path
+		tmpFile, err := afero.TempFile(fs, tmpSpecDir, "kcl-swagger-")
 		if err != nil {
-			return result, fmt.Errorf("could not validate swagger spec: %s, err: %s", opts.Spec, err)
+			return result, fmt.Errorf("could not create temporary file for swagger spec: %s, err: %s", opts.Spec, err)
 		}
-		// copy k8s.json to tmpDir
-		if err := os.WriteFile(filepath.Join(tmpSpecDir, "k8s.json"), []byte(k8sFile), 0644); err != nil {
+		defer tmpFile.Close() // Ensure the file is closed
+
+		// Write k8s.json to the temp directory using afero
+		if err := afero.WriteFile(fs, filepath.Join(tmpSpecDir, "k8s.json"), []byte(k8sFile), 0644); err != nil {
 			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
 		}
+
+		// Write the swagger content to the temporary file
 		if _, err := tmpFile.Write(swaggerContent); err != nil {
 			return result, fmt.Errorf("could not generate swagger spec file: %s, err: %s", opts.Spec, err)
 		}
+
 		// Append the tmp openapi spec file path
 		result = append(result, tmpFile.Name())
 	}
+
 	return result, nil
 }
 
